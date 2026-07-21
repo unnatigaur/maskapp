@@ -34,13 +34,7 @@ function updateFileName() {
 function syncPreview() {
   document.querySelectorAll('.field-toggle input').forEach((cb) => {
     const target = document.querySelector(`.id-row__value[data-field="${cb.name}"]`);
-    if (target) {
-      if (cb.checked) {
-        target.classList.add('masked');
-      } else {
-        target.classList.remove('masked');
-      }
-    }
+    if (target) target.classList.toggle('masked', cb.checked);
   });
 }
 
@@ -48,8 +42,7 @@ document.querySelectorAll('.field-toggle input').forEach((cb) => {
   cb.addEventListener('change', syncPreview);
 });
 
-// Apply initial state on load
-setTimeout(syncPreview, 0);
+syncPreview(); // initial state on load
 
 // ── Form submit ──
 form.addEventListener('submit', async (e) => {

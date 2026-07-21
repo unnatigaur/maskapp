@@ -71,10 +71,10 @@ def extract_custom_targets(text: str):
     scope = "row" if _ROW_SCOPE_WORDS.search(text) else "token"
 
     # 1) Quoted terms always win — most explicit signal
-    for pat in (re.compile(r'"([^"]+)"'), re.compile(r"'([^']+)'")):
+    for pat in (re.compile(r'"([^"]+)"'), re.compile(r"'([^']+)'") ):
         for m in pat.finditer(text):
             term = m.group(1).strip()
-            if term and not term.lower().endswith("s"):  # skip stray "'s" captures
+            if term and not term.lower().endswith("s"):
                 targets.append((term, scope))
     if targets:
         return targets
@@ -190,8 +190,9 @@ def find_aadhaar_number_bboxes(data, img_w, img_h):
 def find_name_bboxes(data, img_w, img_h, label=""):
     bboxes = []
     texts = data["text"]
-    # Combine all field keywords to stop collecting when hitting other fields
-    all_field_keywords = NAME_KEYWORDS + list(FIELD_KEYWORDS.keys()) + ADDR_KEYWORDS
+    # Build stop keywords from known field keywords and address hints
+    stop_keywords = [kw.lower() for kws in FIELD_KEYWORDS.values() for kw in kws] + [kw.lower() for kw in ADDR_KEYWORDS]
+
     for i, t in enumerate(texts):
         if any(kw.lower() in t.lower() for kw in NAME_KEYWORDS) and int(data["conf"][i]) > 20:
             name_tokens = []
@@ -199,8 +200,9 @@ def find_name_bboxes(data, img_w, img_h, label=""):
                 nt = texts[j].strip()
                 if not nt:
                     continue
-                # Stop if we hit another field keyword
-                if any(kw2.lower() in nt.lower() for kw2 in all_field_keywords) and not any(kw2.lower() in nt.lower() for kw2 in NAME_KEYWORDS):
+                nt_l = nt.lower()
+                # Stop if we hit another recognizable field keyword or address token
+                if any(sk in nt_l for sk in stop_keywords):
                     break
                 if re.match(r'^\d+$', nt) and len(nt) > 4:
                     break
@@ -282,7 +284,7 @@ def find_address_bboxes(data, img_w, img_h):
     PIN_PATTERN = re.compile(r'\b\d{6}\b')
     for i, t in enumerate(texts):
         tl = t.lower()
-        if (any(kw in tl for kw in ["s/o", "w/o", "d/o", "village", "dist", "taluk"])
+        if (any(kw in tl for kw in ["s/o", "w/o", "d/o", "village", "dist", "taluk"]) 
                 or PIN_PATTERN.search(t)) and int(data["conf"][i]) > 30:
             x, y, w, h = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
             bboxes.append(pad_bbox(x, y, w, h, img_w, img_h))
