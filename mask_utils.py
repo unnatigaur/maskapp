@@ -295,24 +295,39 @@ def find_name_bboxes(data, img_w, img_h, label=""):
                     pass
 
     # Fallback: if no name found but aadhaar_name requested, look for long uppercase sequences
+    def is_name_fallback_token(tok):
+        tok = tok.strip().strip(',:.')
+        if len(tok) < 4 or not any(c.isalpha() for c in tok):
+            return False
+        if not tok.replace(' ', '').isupper():
+            return False
+        if tok.lower() in {
+            'dob', 'd.o.b', 'date', 'birth', 'name', 'aadhaar', 'aadhar', 'uid', 'uidai',
+            'government', 'india', 'unique', 'identity', 'authority', 'card', 'number',
+            'photo', 'sex', 'male', 'female', 'address', 'father', 'mother'
+        }:
+            return False
+        return True
+
     if not bboxes:
         for i, t in enumerate(texts):
             tok = t.strip()
-            if len(tok) >= 4 and tok.replace(' ', '').isupper() and any(c.isalpha() for c in tok):
-                # capture up to 3 adjacent uppercase tokens
-                name_tokens = [i]
-                for j in range(i + 1, min(i + 4, len(texts))):
-                    nt = texts[j].strip()
-                    if nt and nt.replace(' ', '').isupper():
-                        name_tokens.append(j)
-                    else:
-                        break
-                x0 = min(data["left"][k] for k in name_tokens)
-                y0 = min(data["top"][k] for k in name_tokens)
-                x1 = max(data["left"][k] + data["width"][k] for k in name_tokens)
-                y1 = max(data["top"][k] + data["height"][k] for k in name_tokens)
-                bboxes.append(pad_bbox(x0, y0, x1 - x0, y1 - y0, img_w, img_h))
-                break
+            if not is_name_fallback_token(tok):
+                continue
+            # capture up to 3 adjacent uppercase tokens, but ignore labels
+            name_tokens = [i]
+            for j in range(i + 1, min(i + 4, len(texts))):
+                nt = texts[j].strip()
+                if nt and is_name_fallback_token(nt):
+                    name_tokens.append(j)
+                else:
+                    break
+            x0 = min(data["left"][k] for k in name_tokens)
+            y0 = min(data["top"][k] for k in name_tokens)
+            x1 = max(data["left"][k] + data["width"][k] for k in name_tokens)
+            y1 = max(data["top"][k] + data["height"][k] for k in name_tokens)
+            bboxes.append(pad_bbox(x0, y0, x1 - x0, y1 - y0, img_w, img_h))
+            break
 
     return bboxes
 
