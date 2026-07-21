@@ -160,10 +160,10 @@ def find_aadhaar_number_bboxes(data, img_w, img_h):
         except Exception:
             conf = 0
 
-        # Straight 12-digit token
+        # Straight 12-digit token -> tight box
         if AADHAAR_12.match(t) and conf > 50:
             x, y, w, h = data["left"][i], data["top"][i], data["width"][i], data["height"][i]
-            bboxes.append(pad_bbox(x, y, w, h, img_w, img_h))
+            bboxes.append(pad_bbox(x, y, w, h, img_w, img_h, p=6))
             seen.add(i)
             continue
 
@@ -173,15 +173,21 @@ def find_aadhaar_number_bboxes(data, img_w, img_h):
             j = i + 1
             tops = [data["top"][m] for m in (i, j)]
             heights = [data["height"][m] for m in (i, j)]
-            if max(tops) - min(tops) < 30 and max(heights) / max(1, min(heights)) < 2.0:
+            if max(tops) - min(tops) < 30:
                 x0 = min(data["left"][i], data["left"][j])
-                y0 = min(tops)
                 x1 = max(data["left"][i] + data["width"][i], data["left"][j] + data["width"][j])
-                y1 = max(tops[m] + heights[m] for m in (0, 1))
-                if x1 - x0 <= img_w * 0.8:
-                    bboxes.append(pad_bbox(x0, y0, x1 - x0, y1 - y0, img_w, img_h))
+                # if grouping would create a very wide box, prefer token-level boxes
+                if x1 - x0 > img_w * 0.45:
+                    for m in (i, j):
+                        x, y, w, h = data["left"][m], data["top"][m], data["width"][m], data["height"][m]
+                        bboxes.append(pad_bbox(x, y, w, h, img_w, img_h, p=6))
+                        seen.add(m)
+                else:
+                    y0 = min(tops)
+                    y1 = max(tops[m] + heights[m] for m in (0, 1))
+                    bboxes.append(pad_bbox(x0, y0, x1 - x0, y1 - y0, img_w, img_h, p=6))
                     seen.update([i, j])
-                    continue
+                continue
 
         # 4+4+4 grouping
         if (i < len(texts) - 2 and AADHAAR_4DIGIT.match(t)
@@ -190,20 +196,21 @@ def find_aadhaar_number_bboxes(data, img_w, img_h):
             j, k = i + 1, i + 2
             tops = [data["top"][m] for m in (i, j, k)]
             heights = [data["height"][m] for m in (i, j, k)]
-            if max(tops) - min(tops) < 30 and max(heights) / max(1, min(heights)) < 2.0:
-                x0 = min(data["left"][i], data["left"][j], data["left"][k])
+            x0 = min(data["left"][i], data["left"][j], data["left"][k])
+            x1 = max(data["left"][i] + data["width"][i], data["left"][j] + data["width"][j], data["left"][k] + data["width"][k])
+            # if the combined box would be too wide, create tight boxes per token
+            if x1 - x0 > img_w * 0.45 or max(tops) - min(tops) > 30:
+                for m in (i, j, k):
+                    x, y, w, h = data["left"][m], data["top"][m], data["width"][m], data["height"][m]
+                    bboxes.append(pad_bbox(x, y, w, h, img_w, img_h, p=6))
+                    seen.add(m)
+            else:
                 y0 = min(tops)
-                x1 = max(data["left"][i] + data["width"][i], data["left"][j] + data["width"][j], data["left"][k] + data["width"][k])
                 y1 = max(tops[m] + heights[m] for m in range(3))
-                if x1 - x0 <= img_w * 0.8:
-                    bboxes.append(pad_bbox(x0, y0, x1 - x0, y1 - y0, img_w, img_h))
-                    seen.update([i, j, k])
-                    continue
-            # fallback: mask tokens individually
-            for m in (i, j, k):
-                x, y, w, h = data["left"][m], data["top"][m], data["width"][m], data["height"][m]
-                bboxes.append(pad_bbox(x, y, w, h, img_w, img_h))
-                seen.add(m)
+                bboxes.append(pad_bbox(x0, y0, x1 - x0, y1 - y0, img_w, img_h, p=6))
+                seen.update([i, j, k])
+            continue
+
     return bboxes
 
 
