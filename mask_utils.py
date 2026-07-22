@@ -398,7 +398,15 @@ def find_aadhaar_name_bboxes(data, img_w, img_h):
                         for key, idxs in lines.items()]
 
     _, _, best_key = max(scored_lines)
-    tokens = sorted(lines[best_key], key=lambda i: data["left"][i])[:4]
+    all_idxs = sorted(lines[best_key], key=lambda i: data["left"][i])
+    # if more than 4 tokens on the line, pick 4 centered around the median
+    if len(all_idxs) > 4:
+        centers = [data["left"][i] + data["width"][i] / 2.0 for i in all_idxs]
+        median_center = sorted(centers)[len(centers) // 2]
+        ranked = sorted(all_idxs, key=lambda i: abs((data["left"][i] + data["width"][i] / 2.0) - median_center))
+        tokens = sorted(ranked[:4], key=lambda i: data["left"][i])
+    else:
+        tokens = all_idxs
 
     x0 = min(data["left"][i] for i in tokens)
     y0 = min(data["top"][i] for i in tokens)
