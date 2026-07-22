@@ -1,89 +1,211 @@
-const dropzone = document.getElementById('dropzone');
-const fileInput = document.getElementById('file-input');
-const fileNameEl = document.getElementById('file-name');
-const form = document.getElementById('mask-form');
-const submitBtn = document.getElementById('submit-btn');
-const statusEl = document.getElementById('status');
+(() => {
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("file-input");
+  const fileNameEl = document.getElementById("file-name");
+  const uploadStatus = document.getElementById("upload-status");
 
-// ── Dropzone interactions ──
-dropzone.addEventListener('click', () => fileInput.click());
+  const stepUpload = document.getElementById("step-upload");
+  const stepReview = document.getElementById("step-review");
+  const reviewSubhead = document.getElementById("review-subhead");
+  const groupsContainer = document.getElementById("groups-container");
+  const instructionsEl = document.getElementById("instructions");
+  const maskBtn = document.getElementById("mask-btn");
+  const backBtn = document.getElementById("back-btn");
+  const maskStatus = document.getElementById("mask-status");
 
-dropzone.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  dropzone.classList.add('dragover');
-});
+  let currentJobId = null;
 
-dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  // Categories that are safe to pre-check — clearly identifying fields.
+  // Table columns / generic "other" fields / AI-guessed entities are
+  // left unchecked by default so a bank statement isn't fully blacked
+  // out until the user actually asks for that.
+  const DEFAULT_ON_CATEGORIES = new Set(["identity", "contact"]);
 
-dropzone.addEventListener('drop', (e) => {
-  e.preventDefault();
-  dropzone.classList.remove('dragover');
-  if (e.dataTransfer.files.length) {
-    fileInput.files = e.dataTransfer.files;
-    updateFileName();
-  }
-});
-
-fileInput.addEventListener('change', updateFileName);
-
-function updateFileName() {
-  fileNameEl.textContent = fileInput.files.length ? fileInput.files[0].name : '';
-}
-
-// ── Live preview: checkbox -> redaction bar ──
-function syncPreview() {
-  document.querySelectorAll('.field-toggle input').forEach((cb) => {
-    const target = document.querySelector(`.id-row__value[data-field="${cb.name}"]`);
-    if (target) target.classList.toggle('masked', cb.checked);
+  // ---------- dropzone ----------
+  dropzone.addEventListener("click", () => fileInput.click());
+  dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("dropzone--drag"); });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("dropzone--drag"));
+  dropzone.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("dropzone--drag");
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
   });
-}
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
+  });
 
-document.querySelectorAll('.field-toggle input').forEach((cb) => {
-  cb.addEventListener('change', syncPreview);
-});
-
-syncPreview(); // initial state on load
-
-// ── Form submit ──
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
-
-  if (!fileInput.files.length) {
-    setStatus('Please choose a PDF file first.', 'error');
-    return;
+  function handleFile(file) {
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setStatus(uploadStatus, "Only PDF files are supported.", "error");
+      return;
+    }
+    fileNameEl.textContent = file.name;
+    extractFields(file);
   }
 
-  const formData = new FormData(form);
-  submitBtn.disabled = true;
-  setStatus('Processing — running OCR and masking, this can take a moment…', '');
+  function setStatus(el, message, kind) {
+    el.textContent = message || "";
+    el.className = "status" + (kind ? ` status--${kind}` : "");
+  }
 
-  try {
-    const res = await fetch('/mask', { method: 'POST', body: formData });
+  // ---------- step 1: extract ----------
+  async function extractFields(file) {
+    setStatus(uploadStatus, "Scanning document and detecting fields…", "loading");
+    dropzone.classList.add("dropzone--busy");
 
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error(data.error || 'Something went wrong while masking the document.');
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const res = await fetch("/extract", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(uploadStatus, data.error || "Something went wrong reading that PDF.", "error");
+        dropzone.classList.remove("dropzone--busy");
+        return;
+      }
+      currentJobId = data.job_id;
+      renderGroups(data);
+      setStatus(uploadStatus, "", null);
+      dropzone.classList.remove("dropzone--busy");
+      stepUpload.hidden = true;
+      stepReview.hidden = false;
+    } catch (err) {
+      setStatus(uploadStatus, "Network error — please try again.", "error");
+      dropzone.classList.remove("dropzone--busy");
+    }
+  }
+
+  // ---------- step 2: render detected field groups ----------
+  function renderGroups(data) {
+    groupsContainer.innerHTML = "";
+    reviewSubhead.textContent = data.num_pages
+      ? `${data.num_pages} page(s) scanned. Select what to mask — checking one masks every occurrence.`
+      : "Select what to mask — checking one masks every occurrence.";
+
+    if (!data.groups || data.groups.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "subhead";
+      empty.textContent = data.message || "No standard fields were detected automatically. Describe what to mask below instead.";
+      groupsContainer.appendChild(empty);
+      return;
     }
 
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'masked_output.pdf';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+    const byCategory = {};
+    for (const g of data.groups) {
+      (byCategory[g.category_label] = byCategory[g.category_label] || []).push(g);
+    }
 
-    setStatus('Done — your masked PDF has been downloaded.', 'success');
-  } catch (err) {
-    setStatus(err.message, 'error');
-  } finally {
-    submitBtn.disabled = false;
+    for (const [categoryLabel, groups] of Object.entries(byCategory)) {
+      const section = document.createElement("div");
+      section.className = "group-section";
+
+      const legend = document.createElement("div");
+      legend.className = "fields__legend";
+      legend.textContent = categoryLabel.toUpperCase();
+      section.appendChild(legend);
+
+      const grid = document.createElement("div");
+      grid.className = "fields__grid";
+
+      for (const g of groups) {
+        const label = document.createElement("label");
+        label.className = "field-toggle field-toggle--rich";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = g.group_id;
+        checkbox.checked = DEFAULT_ON_CATEGORIES.has(g.category);
+        checkbox.dataset.groupId = g.group_id;
+
+        const box = document.createElement("span");
+        box.className = "field-toggle__box";
+
+        const textWrap = document.createElement("span");
+        textWrap.className = "field-toggle__text";
+
+        const title = document.createElement("span");
+        title.className = "field-toggle__label";
+        title.textContent = `${g.display_label} (${g.count} found)`;
+
+        const sample = document.createElement("span");
+        sample.className = "field-toggle__sample";
+        const preview = (g.sample_values || []).map(truncate).join(" · ");
+        sample.textContent = preview;
+
+        textWrap.appendChild(title);
+        if (preview) textWrap.appendChild(sample);
+
+        label.appendChild(checkbox);
+        label.appendChild(box);
+        label.appendChild(textWrap);
+        grid.appendChild(label);
+      }
+
+      section.appendChild(grid);
+      groupsContainer.appendChild(section);
+    }
   }
-});
 
-function setStatus(msg, kind) {
-  statusEl.textContent = msg;
-  statusEl.className = 'status' + (kind ? ' ' + kind : '');
-}
+  function truncate(s, n = 42) {
+    if (!s) return "";
+    return s.length > n ? s.slice(0, n) + "…" : s;
+  }
+
+  // ---------- step 3: mask & download ----------
+  backBtn.addEventListener("click", () => {
+    stepReview.hidden = true;
+    stepUpload.hidden = false;
+    fileInput.value = "";
+    fileNameEl.textContent = "";
+    instructionsEl.value = "";
+    setStatus(maskStatus, "", null);
+    currentJobId = null;
+  });
+
+  maskBtn.addEventListener("click", async () => {
+    if (!currentJobId) return;
+    const selected = Array.from(groupsContainer.querySelectorAll("input[type=checkbox]:checked"))
+      .map((cb) => cb.dataset.groupId);
+    const instructions = instructionsEl.value.trim();
+
+    if (selected.length === 0 && !instructions) {
+      setStatus(maskStatus, "Select at least one field, or describe what to mask.", "error");
+      return;
+    }
+
+    setStatus(maskStatus, "Applying redactions…", "loading");
+    maskBtn.disabled = true;
+
+    try {
+      const res = await fetch("/mask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ job_id: currentJobId, group_ids: selected, instructions }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setStatus(maskStatus, data.error || "Masking failed.", "error");
+        maskBtn.disabled = false;
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "masked_output.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+      setStatus(maskStatus, "Done — your masked PDF has downloaded.", "success");
+      maskBtn.disabled = false;
+    } catch (err) {
+      setStatus(maskStatus, "Network error — please try again.", "error");
+      maskBtn.disabled = false;
+    }
+  });
+})();

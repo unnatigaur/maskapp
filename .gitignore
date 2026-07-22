@@ -1,8 +1,5 @@
 __pycache__/
 *.pyc
-uploads/*
-!uploads/.gitkeep
-outputs/*
-!outputs/.gitkeep
-.venv/
-venv/
+uploads/*.pdf
+outputs/*.pdf
+jobs/
