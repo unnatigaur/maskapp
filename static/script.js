@@ -91,6 +91,50 @@
       return;
     }
 
+    if (data.documents && data.documents.length) {
+      const template = document.getElementById("document-template");
+      for (const doc of data.documents) {
+        const section = template.content.firstElementChild.cloneNode(true);
+        section.querySelector(".document-panel__label").textContent = doc.label;
+        section.querySelector(".document-panel__page").textContent = `Page ${doc.page + 1}`;
+        const fieldsGrid = section.querySelector(".document-panel__fields");
+        for (const g of doc.fields) {
+          const label = document.createElement("label");
+          label.className = "field-toggle field-toggle--rich";
+
+          const checkbox = document.createElement("input");
+          checkbox.type = "checkbox";
+          checkbox.value = g.group_id;
+          checkbox.checked = DEFAULT_ON_CATEGORIES.has(g.category);
+          checkbox.dataset.groupId = g.group_id;
+
+          const box = document.createElement("span");
+          box.className = "field-toggle__box";
+
+          const textWrap = document.createElement("span");
+          textWrap.className = "field-toggle__text";
+
+          const title = document.createElement("span");
+          title.className = "field-toggle__label";
+          title.textContent = `${g.display_label} (${g.count} found)`;
+
+          const sample = document.createElement("span");
+          sample.className = "field-toggle__sample";
+          const preview = (g.sample_values || []).map(truncate).join(" · ");
+          sample.textContent = preview;
+
+          textWrap.appendChild(title);
+          if (preview) textWrap.appendChild(sample);
+          label.appendChild(checkbox);
+          label.appendChild(box);
+          label.appendChild(textWrap);
+          fieldsGrid.appendChild(label);
+        }
+        groupsContainer.appendChild(section);
+      }
+      return;
+    }
+
     const byCategory = {};
     for (const g of data.groups) {
       (byCategory[g.category_label] = byCategory[g.category_label] || []).push(g);

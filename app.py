@@ -18,6 +18,50 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
 
+def infer_doc_label(instances):
+    field_types = {inst["field_type"] for inst in instances}
+    if "aadhaar_number" in field_types or "aadhaar_name" in field_types:
+        return "Aadhaar Card"
+    if "pan_number" in field_types or "pan_name" in field_types:
+        return "PAN Card"
+    if "credit_card_number" in field_types:
+        return "Credit Card"
+    if "dob" in field_types and "person_name" in field_types:
+        return "Identity Document"
+    return "Document"
+
+
+def build_document_groups(instances):
+    pages = {}
+    for inst in instances:
+        pages.setdefault(inst["page"], []).append(inst)
+
+    documents = []
+    for page in sorted(pages):
+        page_insts = pages[page]
+        fields = {}
+        for inst in page_insts:
+            key = (inst["category"], inst["field_type"], inst["display_label"])
+            if key not in fields:
+                fields[key] = {
+                    "group_id": f"{page}::{inst['category']}::{inst['field_type']}::{inst['display_label']}",
+                    "category": inst["category"],
+                    "display_label": inst["display_label"],
+                    "count": 0,
+                    "sample_values": [],
+                }
+            fields[key]["count"] += 1
+            if len(fields[key]["sample_values"]) < 3:
+                fields[key]["sample_values"].append(inst["value"])
+
+        documents.append({
+            "page": page,
+            "label": infer_doc_label(page_insts),
+            "fields": sorted(fields.values(), key=lambda f: (f["category"], f["display_label"])),
+        })
+    return documents
+
+
 @app.route("/")
 def index():
     return render_template("index.html", ner_active=ner.ner_available())
@@ -55,11 +99,13 @@ def extract():
     jobs.save_ocr_data(BASE_DIR, job_id, ocr_cache)
     jobs.save_instances(BASE_DIR, job_id, instances, len(page_images))
 
-    groups = pipeline.group_for_ui(instances)
+    documents = build_document_groups(instances)
 
-    if not groups:
+    if not documents:
         return jsonify({
-            "job_id": job_id, "num_pages": len(page_images), "groups": [],
+            "job_id": job_id,
+            "num_pages": len(page_images),
+            "documents": [],
             "ner_active": ner.ner_available(),
             "message": "No standard fields were detected automatically. "
                        "You can still describe what to mask in plain text below.",
@@ -68,7 +114,7 @@ def extract():
     return jsonify({
         "job_id": job_id,
         "num_pages": len(page_images),
-        "groups": groups,
+        "documents": documents,
         "ner_active": ner.ner_available(),
     })
 
@@ -94,7 +140,7 @@ def mask():
     # so a selected checkbox maps back to every matching instance.
     selected_instances = [
         inst for inst in all_instances
-        if f"{inst['category']}::{inst['field_type']}::{inst['display_label']}" in selected_group_ids
+        if f"{inst['page']}::{inst['category']}::{inst['field_type']}::{inst['display_label']}" in selected_group_ids
     ]
 
     if instructions:
