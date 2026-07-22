@@ -99,12 +99,14 @@ def extract():
     jobs.save_ocr_data(BASE_DIR, job_id, ocr_cache)
     jobs.save_instances(BASE_DIR, job_id, instances, len(page_images))
 
+    groups = pipeline.group_for_ui(instances)
     documents = build_document_groups(instances)
 
-    if not documents:
+    if not groups and not documents:
         return jsonify({
             "job_id": job_id,
             "num_pages": len(page_images),
+            "groups": [],
             "documents": [],
             "ner_active": ner.ner_available(),
             "message": "No standard fields were detected automatically. "
@@ -114,6 +116,7 @@ def extract():
     return jsonify({
         "job_id": job_id,
         "num_pages": len(page_images),
+        "groups": groups,
         "documents": documents,
         "ner_active": ner.ner_available(),
     })
@@ -141,6 +144,7 @@ def mask():
     selected_instances = [
         inst for inst in all_instances
         if f"{inst['page']}::{inst['category']}::{inst['field_type']}::{inst['display_label']}" in selected_group_ids
+        or f"{inst['category']}::{inst['field_type']}::{inst['display_label']}" in selected_group_ids
     ]
 
     if instructions:

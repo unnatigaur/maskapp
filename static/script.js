@@ -83,14 +83,6 @@
       ? `${data.num_pages} page(s) scanned. Select what to mask — checking one masks every occurrence.`
       : "Select what to mask — checking one masks every occurrence.";
 
-    if (!data.groups || data.groups.length === 0) {
-      const empty = document.createElement("p");
-      empty.className = "subhead";
-      empty.textContent = data.message || "No standard fields were detected automatically. Describe what to mask below instead.";
-      groupsContainer.appendChild(empty);
-      return;
-    }
-
     if (data.documents && data.documents.length) {
       const template = document.getElementById("document-template");
       for (const doc of data.documents) {
@@ -133,6 +125,69 @@
         groupsContainer.appendChild(section);
       }
       return;
+    }
+
+    if (!data.groups || data.groups.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "subhead";
+      empty.textContent = data.message || "No standard fields were detected automatically. Describe what to mask below instead.";
+      groupsContainer.appendChild(empty);
+      return;
+    }
+
+    const byCategory = {};
+    for (const g of data.groups) {
+      (byCategory[g.category_label] = byCategory[g.category_label] || []).push(g);
+    }
+
+    for (const [categoryLabel, groups] of Object.entries(byCategory)) {
+      const section = document.createElement("div");
+      section.className = "group-section";
+
+      const legend = document.createElement("div");
+      legend.className = "fields__legend";
+      legend.textContent = categoryLabel.toUpperCase();
+      section.appendChild(legend);
+
+      const grid = document.createElement("div");
+      grid.className = "fields__grid";
+
+      for (const g of groups) {
+        const label = document.createElement("label");
+        label.className = "field-toggle field-toggle--rich";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = g.group_id;
+        checkbox.checked = DEFAULT_ON_CATEGORIES.has(g.category);
+        checkbox.dataset.groupId = g.group_id;
+
+        const box = document.createElement("span");
+        box.className = "field-toggle__box";
+
+        const textWrap = document.createElement("span");
+        textWrap.className = "field-toggle__text";
+
+        const title = document.createElement("span");
+        title.className = "field-toggle__label";
+        title.textContent = `${g.display_label} (${g.count} found)`;
+
+        const sample = document.createElement("span");
+        sample.className = "field-toggle__sample";
+        const preview = (g.sample_values || []).map(truncate).join(" · ");
+        sample.textContent = preview;
+
+        textWrap.appendChild(title);
+        if (preview) textWrap.appendChild(sample);
+
+        label.appendChild(checkbox);
+        label.appendChild(box);
+        label.appendChild(textWrap);
+        grid.appendChild(label);
+      }
+
+      section.appendChild(grid);
+      groupsContainer.appendChild(section);
     }
 
     const byCategory = {};
