@@ -217,6 +217,14 @@ html, body {
   transform: rotate(45deg);
 }
 
+.hidden-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .field-toggle__text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .field-toggle__label { color: var(--text); }
 .field-toggle__sample {
