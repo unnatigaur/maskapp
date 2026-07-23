@@ -165,9 +165,9 @@ def detect_labelled_dates(words, lines, page, img_w, img_h, counter):
 
 def _find_keyword_x_center(words, line_word_idxs, keyword):
     """x-center of a (possibly multi-word) keyword's position within a line, or None."""
-    kw_tokens = keyword.lower().split()
+    kw_tokens = i18n_labels.normalize(keyword).split()
     n = len(kw_tokens)
-    line_tokens = [words[i]["text"].strip(",.:;()").lower() for i in line_word_idxs]
+    line_tokens = [i18n_labels.normalize(words[i]["text"].strip(",.:;()")) for i in line_word_idxs]
     for start in range(len(line_tokens) - n + 1):
         if line_tokens[start:start + n] == kw_tokens:
             idxs = line_word_idxs[start:start + n]
@@ -282,8 +282,7 @@ def detect_address(words, lines, page, img_w, img_h, counter):
     out, seen = [], set()
     claimed_lines = set()
     for li, line in enumerate(lines):
-        tl = line["text"].lower()
-        if not any(kw.lower() in tl for kw in ["address", "पता"]):
+        if not i18n_labels.contains_any_keyword(line["text"], ADDR_KEYWORDS):
             continue
         if li in claimed_lines:
             continue
@@ -327,11 +326,10 @@ def detect_name(words, lines, page, img_w, img_h, counter):
     out, seen = [], set()
     claimed_lines = set()
     for li, line in enumerate(lines):
-        tl = line["text"].lower()
-        if not any(kw.lower() in tl for kw in NAME_KEYWORDS) or li in claimed_lines:
+        if not i18n_labels.contains_any_keyword(line["text"], NAME_KEYWORDS) or li in claimed_lines:
             continue
-        label_idxs = {i for i in line["word_idxs"] if any(
-            kw.lower() in words[i]["text"].lower() for kw in NAME_KEYWORDS)}
+        label_idxs = {i for i in line["word_idxs"]
+                      if i18n_labels.contains_any_keyword(words[i]["text"], NAME_KEYWORDS)}
         value_idxs = [i for i in line["word_idxs"]
                       if i not in label_idxs and words[i]["text"].strip(" /-:|") != ""]
         claimed_lines.add(li)
