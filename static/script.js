@@ -14,12 +14,16 @@
   const maskStatus = document.getElementById("mask-status");
 
   let currentJobId = null;
+  let pollTimer = null;
 
   // Categories that are safe to pre-check — clearly identifying fields.
   // Table columns / generic "other" fields / AI-guessed entities are
   // left unchecked by default so a bank statement isn't fully blacked
   // out until the user actually asks for that.
   const DEFAULT_ON_CATEGORIES = new Set(["identity", "contact"]);
+
+  const POLL_INTERVAL_MS = 1500;
+  const POLL_TIMEOUT_MS = 8 * 60 * 1000; // give up after 8 minutes of polling
 
   // ---------- dropzone ----------
   dropzone.addEventListener("click", () => fileInput.click());
@@ -40,7 +44,7 @@
       return;
     }
     fileNameEl.textContent = file.name;
-    extractFields(file);
+    startExtraction(file);
   }
 
   function setStatus(el, message, kind) {
@@ -48,31 +52,96 @@
     el.className = "status" + (kind ? ` status--${kind}` : "");
   }
 
-  // ---------- step 1: extract ----------
-  async function extractFields(file) {
-    setStatus(uploadStatus, "Scanning document and detecting fields…", "loading");
+  // ---------- step 1: kick off extraction ----------
+  // The server hands back a job_id almost immediately and does the
+  // actual OCR in the background — this request is intentionally not
+  // where we wait for the slow part, so it can't be killed by a
+  // reverse-proxy/load-balancer timeout the way a single long-blocking
+  // request could be. See step 1b for where the real waiting happens.
+  async function startExtraction(file) {
+    setStatus(uploadStatus, "Uploading…", "loading");
     dropzone.classList.add("dropzone--busy");
+    stopPolling();
 
     const formData = new FormData();
     formData.append("file", file);
 
+    let res;
     try {
-      const res = await fetch("/extract", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) {
-        setStatus(uploadStatus, data.error || "Something went wrong reading that PDF.", "error");
+      res = await fetch("/extract", { method: "POST", body: formData });
+    } catch (err) {
+      dropzone.classList.remove("dropzone--busy");
+      setStatus(uploadStatus, "Could not reach the server — check your connection and try again.", "error");
+      return;
+    }
+
+    let data = null;
+    try {
+      data = await res.json();
+    } catch (parseErr) {
+      dropzone.classList.remove("dropzone--busy");
+      setStatus(uploadStatus, `Server returned an unexpected response (status ${res.status}). Check the server logs.`, "error");
+      return;
+    }
+
+    if (!res.ok || !data.job_id) {
+      dropzone.classList.remove("dropzone--busy");
+      setStatus(uploadStatus, data.error || `Upload failed (status ${res.status}).`, "error");
+      return;
+    }
+
+    currentJobId = data.job_id;
+    setStatus(uploadStatus, "Scanning document and detecting fields — this can take a while for multilingual or multi-page documents…", "loading");
+    pollExtractionStatus(data.job_id, Date.now());
+  }
+
+  // ---------- step 1b: poll until OCR/detection finishes ----------
+  function pollExtractionStatus(jobId, startedAt) {
+    stopPolling();
+    pollTimer = setTimeout(async () => {
+      if (jobId !== currentJobId) return; // a newer upload superseded this one
+
+      if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
         dropzone.classList.remove("dropzone--busy");
+        setStatus(uploadStatus, "Still not done after several minutes — something is likely stuck server-side. Check the server logs.", "error");
         return;
       }
-      currentJobId = data.job_id;
-      renderGroups(data);
-      setStatus(uploadStatus, "", null);
+
+      let res, data;
+      try {
+        res = await fetch(`/extract/status/${jobId}`);
+        data = await res.json();
+      } catch (err) {
+        // A single polling request dropping doesn't mean the job failed —
+        // the background work keeps running regardless — so just retry.
+        pollExtractionStatus(jobId, startedAt);
+        return;
+      }
+
+      if (data.status === "processing") {
+        pollExtractionStatus(jobId, startedAt);
+        return;
+      }
+
       dropzone.classList.remove("dropzone--busy");
-      stepUpload.hidden = true;
-      stepReview.hidden = false;
-    } catch (err) {
-      setStatus(uploadStatus, "Network error — please try again.", "error");
-      dropzone.classList.remove("dropzone--busy");
+
+      if (data.status === "done") {
+        renderGroups(data);
+        setStatus(uploadStatus, "", null);
+        stepUpload.hidden = true;
+        stepReview.hidden = false;
+        return;
+      }
+
+      // status === "error" (or anything unrecognized)
+      setStatus(uploadStatus, data.error || "Something went wrong reading that PDF.", "error");
+    }, POLL_INTERVAL_MS);
+  }
+
+  function stopPolling() {
+    if (pollTimer) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
     }
   }
 
@@ -154,6 +223,7 @@
 
   // ---------- step 3: mask & download ----------
   backBtn.addEventListener("click", () => {
+    stopPolling();
     stepReview.hidden = true;
     stepUpload.hidden = false;
     fileInput.value = "";
@@ -177,35 +247,39 @@
     setStatus(maskStatus, "Applying redactions…", "loading");
     maskBtn.disabled = true;
 
+    let res;
     try {
-      const res = await fetch("/mask", {
+      res = await fetch("/mask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ job_id: currentJobId, group_ids: selected, instructions }),
       });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setStatus(maskStatus, data.error || "Masking failed.", "error");
-        maskBtn.disabled = false;
-        return;
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "masked_output.pdf";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-
-      setStatus(maskStatus, "Done — your masked PDF has downloaded.", "success");
-      maskBtn.disabled = false;
     } catch (err) {
-      setStatus(maskStatus, "Network error — please try again.", "error");
+      setStatus(maskStatus, "Could not reach the server — check your connection and try again.", "error");
       maskBtn.disabled = false;
+      return;
     }
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      const detail = data.error
+        || `Server returned ${res.status}${res.status === 504 || res.status === 502 ? " (timed out — try a smaller or lower-resolution PDF)" : ""}.`;
+      setStatus(maskStatus, detail, "error");
+      maskBtn.disabled = false;
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "masked_output.pdf";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    setStatus(maskStatus, "Done — your masked PDF has downloaded.", "success");
+    maskBtn.disabled = false;
   });
 })();

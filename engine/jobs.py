@@ -55,6 +55,32 @@ def load_ocr_data(base_dir, job_id):
     return [(p["words"], p["lines"], p["img_w"], p["img_h"]) for p in raw]
 
 
+def set_status(base_dir, job_id, status, error=None, extra=None):
+    """status: 'processing' | 'done' | 'error'."""
+    d = job_dir(base_dir, job_id)
+    payload = {"status": status, "updated_at": time.time()}
+    if error is not None:
+        payload["error"] = error
+    if extra:
+        payload.update(extra)
+    tmp_path = os.path.join(d, "status.json.tmp")
+    final_path = os.path.join(d, "status.json")
+    with open(tmp_path, "w") as f:
+        json.dump(payload, f)
+    os.replace(tmp_path, final_path)  # atomic — a poll never sees a half-written file
+
+
+def get_status(base_dir, job_id):
+    path = os.path.join(job_dir(base_dir, job_id), "status.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def save_instances(base_dir, job_id, instances, num_pages):
     d = job_dir(base_dir, job_id)
     with open(os.path.join(d, "instances.json"), "w") as f:
